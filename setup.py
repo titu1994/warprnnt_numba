@@ -7,7 +7,7 @@ from setuptools import find_packages, setup, Command
 import importlib.util
 
 # Package arguments
-spec = importlib.util.spec_from_file_location('package_info', 'nemo/package_info.py')
+spec = importlib.util.spec_from_file_location('package_info', 'warprnnt_numba/package_info.py')
 package_info = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package_info)
 
