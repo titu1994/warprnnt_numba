@@ -49,13 +49,7 @@ if os.path.exists(os.path.join(base_path, 'LICENCE')):
 
 def get_version():
     """Return package version as listed in `__version__` in `init.py`."""
-    if DIRECTORY_NAME is None:
-        package_path = PACKAGE_NAME
-    else:
-        package_path = DIRECTORY_NAME
-
-    init_py = open(os.path.join(package_path, '__init__.py')).read()
-    return re.search("__version__ = ['\"]([^'\"]+)['\"]", init_py).group(1)
+    return package_info.__version__
 
 
 try:
