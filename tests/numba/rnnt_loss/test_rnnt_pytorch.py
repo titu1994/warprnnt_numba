@@ -138,7 +138,7 @@ class TestRNNTLossPytorch:
         assert np.allclose(pt_grads, np_grads, atol=1e-5, rtol=1e-5), "small_random_test gradient mismatch."
 
     @pytest.mark.parametrize('device', DEVICES)
-    def big_test(self, device):
+    def test_case_big_tensor(self, device):
         if device == 'cuda':
             numba_utils.skip_numba_cuda_test_if_unsupported(__NUMBA_MINIMUM_VERSION__)
 
