@@ -1,4 +1,4 @@
-# RNNT loss in Pytorch - Numba JIT compiled (warprnnt_numba)
+# RNNT loss in Pytorch - Numba JIT compiled (warprnnt_numba) [![Test-CPU](https://github.com/titu1994/warprnnt_numba/actions/workflows/CI-CPU.yml/badge.svg)](https://github.com/titu1994/warprnnt_numba/actions/workflows/CI-CPU.yml)
 
 Warp RNN Transducer Loss for ASR in Pytorch, ported from [HawkAaron/warp-transducer](https://github.com/HawkAaron/warp-transducer) and a replica of the stable version in NVIDIA Neural Module repository ([NVIDIA NeMo](https://github.com/NVIDIA/NeMo)).
 
