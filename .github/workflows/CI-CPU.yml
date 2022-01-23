@@ -1,0 +1,33 @@
+name: Test-CPU
+
+# see: https://help.github.com/en/actions/reference/events-that-trigger-workflows
+on:  # Trigger the workflow on push or pull request, but only for the master branch
+  push:
+    branches: [master, "release/*"]
+  pull_request:
+    branches: [master, "release/*"]
+
+jobs:
+  conda:
+    runs-on: ubuntu-20.04
+    container: pytorch/pytorch:1.10.0-cuda11.3-cudnn8-runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8"]
+        pytorch-version: ["1.10"]
+
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Update dependencies
+      run: |
+        # adjust versions according installed Torch version
+        conda install -y -c conda-forge numba==0.55  
+        pip install -e .
+        
+    - name: Tests
+      run: |
+        pytest tests/
+      shell: bash -l {0}
