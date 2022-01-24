@@ -57,11 +57,8 @@ labels = torch.tensor([[1, 1, 3, 4, 0], [2, 2, 3, 1, 4]], dtype=torch.int32, dev
 label_lengths = torch.tensor([3, 4], dtype=torch.int32, device=device)  # Lengths here must be WITHOUT the EOS token.
 
 # If on CUDA, log_softmax is computed internally efficiently (preserving memory and speed)
-# Compute it explicitly for CPU, sacrificing some memory.
-if device == 'cpu':
-    acts = torch.log_softmax(acts, dim=-1)
-
-loss_func = RNNTLossNumba(blank=4, reduction='none', fastemit_lambda=0.0)  # -1-th vocab index is RNNT blank token
+# Compute it explicitly for CPU, this is done automatically for you inside forward() of the loss.
+loss_func = warprnnt_numba.RNNTLossNumba(blank=4, reduction='none', fastemit_lambda=0.0)  # -1-th vocab index is RNNT blank token
 loss = loss_func(acts, labels, sequence_length, label_lengths)
 print("Loss :", loss)
 loss.sum().backward()
