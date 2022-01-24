@@ -52,6 +52,12 @@ def log_sum_exp(a: torch.Tensor, b: torch.Tensor):
         return math.log1p(math.exp(a - b)) + b
 
 
+def clamp(grad, clamp: float):
+    grad = min(grad, clamp)
+    grad = max(grad, -clamp)
+    return grad
+
+
 class CpuRNNT_index:
     def __init__(self, U: int, maxU: int, minibatch: int, alphabet_size: int, batch_first: bool):
         """
@@ -147,6 +153,7 @@ class CPURNNT:
         workspace: torch.Tensor,
         blank: int,
         fastemit_lambda: float,
+        clamp: float,
         num_threads: int,
         batch_first: bool,
     ):
@@ -163,6 +170,7 @@ class CPURNNT:
             blank: Index of the RNNT blank token in the vocabulary. Generally the first or last token in the vocab.
             fastemit_lambda: Float scaling factor for FastEmit regularization. Refer to
                 FastEmit: Low-latency Streaming ASR with Sequence-level Emission Regularization.
+            clamp: Float value. When set to value >= 0.0, will clamp the gradient to [-clamp, clamp].
             num_threads: Number of OMP threads to launch.
             batch_first: Bool that decides if batch dimension is first or third.
         """
@@ -173,6 +181,7 @@ class CPURNNT:
         self.workspace = workspace  # a flat vector of floatX numbers that represents allocated memory slices
         self.blank_ = blank
         self.fastemit_lambda_ = fastemit_lambda
+        self.clamp_ = abs(clamp)
         self.num_threads_ = num_threads
         self.batch_first = batch_first
 
@@ -297,16 +306,28 @@ class CPURNNT:
                     g = alphas[idx(t, u)] + betas[idx(t + 1, u)]
                     grad[idx(t, u, self.blank_)] = -torch.exp(log_probs[idx(t, u) * 2] + g - loglike)
 
+                    # clamp gradient (if needed)
+                    if self.clamp_ > 0.0:
+                        grad[idx(t, u, self.blank_)] = clamp(grad[idx(t, u, self.blank_)], self.clamp_)
+
                 if u < U - 1:
                     g = alphas[idx(t, u)] + betas[idx(t, u + 1)]
                     grad[idx(t, u, labels[u])] = -torch.exp(
                         math.log1p(self.fastemit_lambda_) + log_probs[idx(t, u) * 2 + 1] + g - loglike
                     )
 
+                    # clamp gradient (if needed)
+                    if self.clamp_ > 0.0:
+                        grad[idx(t, u, labels[u])] = clamp(grad[idx(t, u, labels[u])], self.clamp_)
+
         # // gradient to the last blank transition
         grad[idx(T - 1, U - 1, self.blank_)] = -torch.exp(
             log_probs[idx(T - 1, U - 1) * 2] + alphas[idx(T - 1, U - 1)] - loglike
         )
+
+        # clamp gradient (if needed)
+        if self.clamp_ > 0.0:
+            grad[idx(T - 1, U - 1, self.blank_)] = clamp(grad[idx(T - 1, U - 1, self.blank_)], self.clamp_)
 
         return loglike
 
