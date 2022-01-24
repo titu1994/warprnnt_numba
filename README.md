@@ -10,6 +10,7 @@ Currently supports :
 
 1) WarpRNNT loss in pytorch for CPU / CUDA (jit compiled)
 2) [FastEmit](https://arxiv.org/abs/2010.11148)
+3) Gradient Clipping (from Torch Audio)
 
 # Installation
 You will need PyTorch (usually the latest version should be used), plus installation of [Numba](https://numba.pydata.org/) in a Conda environment (pip only environment is untested but may work).
