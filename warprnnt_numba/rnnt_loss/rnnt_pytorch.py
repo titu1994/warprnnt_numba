@@ -106,6 +106,16 @@ def rnnt_loss(acts, labels, act_lens, label_lens, blank=0, reduction='mean', fas
             then the mean over the batch is taken. Default: 'mean'
     """
     if not acts.is_cuda:
+        # Since CPU requires log_softmax to be computed explicitly, we need to perform grad clipping
+        # *after* we have obtained the gradients of loss(logsoftmax()).
+        # This is highly wasteful since it requires a copy of the entire joint tensor which is expensive.
+        # CUDA version is much more efficient since it performs an inplace logsoftmax, and therefore
+        # can inplace clamp the gradient.
+        if clamp > 0.0:
+            acts = cpu_rnnt.LogSoftmaxGradClip.apply(acts, clamp)
+
+        # NOTE manually done log_softmax for CPU version,
+        # log_softmax is computed within GPU version.
         acts = torch.nn.functional.log_softmax(acts, -1)
 
     return _RNNTNumba.apply(acts, labels, act_lens, label_lens, blank, reduction, fastemit_lambda, clamp)
