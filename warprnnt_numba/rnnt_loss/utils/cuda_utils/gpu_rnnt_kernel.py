@@ -389,8 +389,10 @@ def compute_grad_kernel(
 
             # clamp gradient (if needed)
             if clamp > 0.0:
-                grads[col * alphabet_size + idx] = min(grad, clamp)
-                grads[col * alphabet_size + idx] = max(grad, -clamp)
+                g = grads[col * alphabet_size + idx]
+                g = min(g, clamp)
+                g = max(g, -clamp)
+                grads[col * alphabet_size + idx] = g
 
             # update internal index through the thread_buffer;
             # until idx < V + 1, such that entire vocabulary has been updated.

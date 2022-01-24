@@ -32,6 +32,7 @@ from torch.autograd import Function
 from torch.nn import Module
 
 from warprnnt_numba.rnnt_loss import rnnt
+from warprnnt_numba.rnnt_loss.utils.cpu_utils import cpu_rnnt
 
 __all__ = ['rnnt_loss', 'RNNTLossNumba']
 
@@ -139,6 +140,14 @@ class RNNTLossNumba(Module):
         label_lens: Tensor of (batch) containing label length of each example
         """
         if not acts.is_cuda:
+            # Since CPU requires log_softmax to be computed explicitly, we need to perform grad clipping
+            # *after* we have obtained the gradients of loss(logsoftmax()).
+            # This is highly wasteful since it requires a copy of the entire joint tensor which is expensive.
+            # CUDA version is much more efficient since it performs an inplace logsoftmax, and therefore
+            # can inplace clamp the gradient.
+            if self.clamp > 0.0:
+                acts = cpu_rnnt.LogSoftmaxGradClip.apply(acts, self.clamp)
+
             # NOTE manually done log_softmax for CPU version,
             # log_softmax is computed within GPU version.
             acts = torch.nn.functional.log_softmax(acts, -1)

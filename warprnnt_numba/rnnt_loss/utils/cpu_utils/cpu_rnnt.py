@@ -32,6 +32,7 @@ from typing import Optional
 
 import numba
 import torch
+from torch.autograd import Function
 
 from warprnnt_numba.rnnt_loss.utils import global_constants
 
@@ -50,12 +51,6 @@ def log_sum_exp(a: torch.Tensor, b: torch.Tensor):
         return math.log1p(math.exp(b - a)) + a
     else:
         return math.log1p(math.exp(a - b)) + b
-
-
-def clamp(grad, clamp: float):
-    grad = min(grad, clamp)
-    grad = max(grad, -clamp)
-    return grad
 
 
 class CpuRNNT_index:
@@ -141,6 +136,27 @@ class CpuRNNT_metadata:
                 # // labels do not have first blank
                 if u < U - 1:
                     self.log_probs2[offset + 1] = log_probs[idx(t, u, labels[u])]
+
+
+class LogSoftmaxGradClip(Function):
+
+    @staticmethod
+    def forward(ctx, acts, clamp):
+        if clamp < 0:
+            raise ValueError("`clamp` must be 0.0 or positive float.")
+
+        # This is needed for correctness (inplace is problematic),
+        # but it wastes a log of memory.
+        res = acts.new(acts)
+        ctx.clamp = clamp
+        return res
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Clamp the gradients of loss(logsoftmax(...))
+        # CPU computes logsoftmax explicitly, so we need to override t
+        grad_output = torch.clamp(grad_output, -ctx.clamp, ctx.clamp)
+        return grad_output, None,
 
 
 class CPURNNT:
@@ -306,28 +322,16 @@ class CPURNNT:
                     g = alphas[idx(t, u)] + betas[idx(t + 1, u)]
                     grad[idx(t, u, self.blank_)] = -torch.exp(log_probs[idx(t, u) * 2] + g - loglike)
 
-                    # clamp gradient (if needed)
-                    if self.clamp_ > 0.0:
-                        grad[idx(t, u, self.blank_)] = clamp(grad[idx(t, u, self.blank_)], self.clamp_)
-
                 if u < U - 1:
                     g = alphas[idx(t, u)] + betas[idx(t, u + 1)]
                     grad[idx(t, u, labels[u])] = -torch.exp(
                         math.log1p(self.fastemit_lambda_) + log_probs[idx(t, u) * 2 + 1] + g - loglike
                     )
 
-                    # clamp gradient (if needed)
-                    if self.clamp_ > 0.0:
-                        grad[idx(t, u, labels[u])] = clamp(grad[idx(t, u, labels[u])], self.clamp_)
-
         # // gradient to the last blank transition
         grad[idx(T - 1, U - 1, self.blank_)] = -torch.exp(
             log_probs[idx(T - 1, U - 1) * 2] + alphas[idx(T - 1, U - 1)] - loglike
         )
-
-        # clamp gradient (if needed)
-        if self.clamp_ > 0.0:
-            grad[idx(T - 1, U - 1, self.blank_)] = clamp(grad[idx(T - 1, U - 1, self.blank_)], self.clamp_)
 
         return loglike
 
