@@ -45,25 +45,32 @@ loss_pt = warprnnt_numba.RNNTLossNumba(blank=4, reduction='sum', fastemit_lambda
 device = "cuda"
 torch.random.manual_seed(0)
 
-# Assume Batchsize=2, Acoustic Timesteps = 8, Label Timesteps = 5 (including EOS token), 
+# Assume Batchsize=2, Acoustic Timesteps = 8, Label Timesteps = 5 (including BLANK=BOS token),
 # and Vocabulary size of 5 tokens (including RNNT BLANK)
 acts = torch.randn(2, 8, 5, 5, device=device, requires_grad=True)
-sequence_length = torch.tensor([5, 8], dtype=torch.int32, device=device)  # acoustic sequence length. One element must be == acts.shape[1].
+sequence_length = torch.tensor([5, 8], dtype=torch.int32,
+                               device=device)  # acoustic sequence length. One element must be == acts.shape[1].
 
-# Let 0 be MASK value, 1-3 be token ids, and 4 represent RNNT BLANK token 
-# The BLANK token is overloaded for EOS token as well here, but can be different token.
+# Let 0 be MASK/PAD value, 1-3 be token ids, and 4 represent RNNT BLANK token
+# The BLANK token is overloaded for BOS token as well here, but can be different token.
 # Let first sample be padded with 0 (actual length = 3). Loss is computed according to supplied `label_lengths`.
 # and gradients for the 4th index onwards (0 based indexing).
-labels = torch.tensor([[1, 1, 3, 4, 0], [2, 2, 3, 1, 4]], dtype=torch.int32, device=device)
-label_lengths = torch.tensor([3, 4], dtype=torch.int32, device=device)  # Lengths here must be WITHOUT the EOS token.
+labels = torch.tensor([[4, 1, 1, 3, 0], [4, 2, 2, 3, 1]], dtype=torch.int32, device=device)
+label_lengths = torch.tensor([3, 4], dtype=torch.int32,
+                             device=device)  # Lengths here must be WITHOUT the BOS token.
 
 # If on CUDA, log_softmax is computed internally efficiently (preserving memory and speed)
 # Compute it explicitly for CPU, this is done automatically for you inside forward() of the loss.
-loss_func = warprnnt_numba.RNNTLossNumba(blank=4, reduction='none', fastemit_lambda=0.0)  # -1-th vocab index is RNNT blank token
+# -1-th vocab index is RNNT blank token here.
+loss_func = warprnnt_numba.RNNTLossNumba(blank=4, reduction='none',
+                                         fastemit_lambda=0.0, clamp=0.0)
 loss = loss_func(acts, labels, sequence_length, label_lengths)
 print("Loss :", loss)
 loss.sum().backward()
 
+# When parsing the gradients, look at grads[0] -
+# Since it was padded in T (sequence_length=5 < T=8), there are gradients only for grads[0, :5, :, :].
+# Since it was padded in U (label_lengths=3+1 < U=5), there are gradeints only for grads[0, :5, :3+1, :].
 grads = acts.grad
 print("Gradients of activations :")
 print(grads)
