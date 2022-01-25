@@ -134,11 +134,11 @@ class RNNTLossNumba(Module):
         clamp: Float value. When set to value >= 0.0, will clamp the gradient to [-clamp, clamp].
     """
 
-    def __init__(self, blank=0, reduction='mean', fastemit_lambda: float = 0.0, clamp: float = 0.0):
+    def __init__(self, blank=0, reduction='mean', fastemit_lambda: float = 0.0, clamp: float = -1):
         super(RNNTLossNumba, self).__init__()
         self.blank = blank
         self.fastemit_lambda = fastemit_lambda
-        self.clamp = clamp
+        self.clamp = float(clamp) if clamp > 0 else 0.0
         self.reduction = reduction
         self.loss = _RNNTNumba.apply
 

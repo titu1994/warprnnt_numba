@@ -328,11 +328,11 @@ class RNNTLoss(Module):
         fastemit_lambda: Float scaling factor for FastEmit regularization.
     """
 
-    def __init__(self, blank: int = 0, fastemit_lambda: float = 0.0, clamp: float = 0.0):
+    def __init__(self, blank: int = 0, fastemit_lambda: float = 0.0, clamp: float = -1.):
         super(RNNTLoss, self).__init__()
         self.blank = blank
         self.fastemit_lambda = fastemit_lambda
-        self.clamp = clamp
+        self.clamp = float(clamp) if clamp > 0 else 0.0
         self.rnnt = _RNNT.apply
 
     def forward(self, acts, labels, act_lens, label_lens):
