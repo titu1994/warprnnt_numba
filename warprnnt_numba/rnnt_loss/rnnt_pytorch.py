@@ -91,8 +91,9 @@ class _RNNTNumba(Function):
             return ctx.grads.mul(grad_output), None, None, None, None, None, None, None
 
 
-def rnnt_loss(acts, labels, act_lens, label_lens, blank=0, reduction='mean', fastemit_lambda: float = 0.0,
-              clamp: float = 0.0):
+def rnnt_loss(
+    acts, labels, act_lens, label_lens, blank=0, reduction='mean', fastemit_lambda: float = 0.0, clamp: float = 0.0
+):
     """RNN Transducer Loss (functional form)
     Args:
         acts: Tensor of (batch x seqLength x labelLength x outputDim) containing output from network
@@ -112,7 +113,7 @@ def rnnt_loss(acts, labels, act_lens, label_lens, blank=0, reduction='mean', fas
         # CUDA version is much more efficient since it performs an inplace logsoftmax, and therefore
         # can inplace clamp the gradient.
         if clamp > 0.0:
-            acts = cpu_rnnt.LogSoftmaxGradClip.apply(acts, clamp)
+            acts = cpu_rnnt.LogSoftmaxGradModification.apply(acts, clamp)
 
         # NOTE manually done log_softmax for CPU version,
         # log_softmax is computed within GPU version.
@@ -156,14 +157,15 @@ class RNNTLossNumba(Module):
             # CUDA version is much more efficient since it performs an inplace logsoftmax, and therefore
             # can inplace clamp the gradient.
             if self.clamp > 0.0:
-                acts = cpu_rnnt.LogSoftmaxGradClip.apply(acts, self.clamp)
+                acts = cpu_rnnt.LogSoftmaxGradModification.apply(acts, self.clamp)
 
             # NOTE manually done log_softmax for CPU version,
             # log_softmax is computed within GPU version.
             acts = torch.nn.functional.log_softmax(acts, -1)
 
-        return self.loss(acts, labels, act_lens, label_lens, self.blank, self.reduction, self.fastemit_lambda,
-                         self.clamp)
+        return self.loss(
+            acts, labels, act_lens, label_lens, self.blank, self.reduction, self.fastemit_lambda, self.clamp
+        )
 
 
 def check_type(var, t, name):

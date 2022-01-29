@@ -90,8 +90,7 @@ def _assert_no_grad(tensor):
     )
 
 
-class LogSoftmaxGradClip(Function):
-
+class LogSoftmaxGradModification(Function):
     @staticmethod
     def forward(ctx, acts, clamp):
         if clamp < 0:
@@ -104,7 +103,10 @@ class LogSoftmaxGradClip(Function):
     @staticmethod
     def backward(ctx, grad_output):
         grad_output = torch.clamp(grad_output, -ctx.clamp, ctx.clamp)
-        return grad_output, None,
+        return (
+            grad_output,
+            None,
+        )
 
 
 def forward_pass(log_probs, labels, blank):
@@ -328,7 +330,7 @@ class RNNTLoss(Module):
         fastemit_lambda: Float scaling factor for FastEmit regularization.
     """
 
-    def __init__(self, blank: int = 0, fastemit_lambda: float = 0.0, clamp: float = -1.):
+    def __init__(self, blank: int = 0, fastemit_lambda: float = 0.0, clamp: float = -1.0):
         super(RNNTLoss, self).__init__()
         self.blank = blank
         self.fastemit_lambda = fastemit_lambda
@@ -343,7 +345,7 @@ class RNNTLoss(Module):
         certify_inputs(acts, labels, act_lens, label_lens)
 
         if self.clamp > 0.0:
-            acts = LogSoftmaxGradClip.apply(acts, self.clamp)
+            acts = LogSoftmaxGradModification.apply(acts, self.clamp)
 
         acts = torch.nn.functional.log_softmax(acts, -1)
         return self.rnnt(acts, labels, act_lens, label_lens, self.blank, self.fastemit_lambda)

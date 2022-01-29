@@ -63,7 +63,7 @@ class CpuRNNT_index:
             U: Length of the current target sample (without padding).
             maxU: Max Length of the padded target samples.
             minibatch: Minibatch index
-           alphabet_size: Size of the vocabulary including RNNT blank - V+1.
+            alphabet_size: Size of the vocabulary including RNNT blank - V+1.
             batch_first: Bool flag determining if batch index is first or third.
         """
         super(CpuRNNT_index, self).__init__()
@@ -138,7 +138,7 @@ class CpuRNNT_metadata:
                     self.log_probs2[offset + 1] = log_probs[idx(t, u, labels[u])]
 
 
-class LogSoftmaxGradClip(Function):
+class LogSoftmaxGradModification(Function):
 
     @staticmethod
     def forward(ctx, acts, clamp):
