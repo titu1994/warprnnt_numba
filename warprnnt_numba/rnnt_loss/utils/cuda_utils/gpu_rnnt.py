@@ -27,7 +27,7 @@
 # limitations under the License.
 
 import multiprocessing
-from typing import Optional
+from typing import Optional, Tuple
 
 import numba
 import torch
@@ -83,6 +83,7 @@ class GPURNNT:
 
         if num_threads > 0:
             numba.set_num_threads(min(multiprocessing.cpu_count(), num_threads))
+            self.num_threads_ = numba.get_num_threads()
         else:
             self.num_threads_ = numba.get_num_threads()
 
@@ -147,26 +148,11 @@ class GPURNNT:
             An enum that either represents a successful RNNT operation or failure.
         """
         training = grads is not None
-        used_offset = 0
-
-        # // denom
-        denom = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-
-        # // alphas & betas
-        alphas = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-        betas = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-
-        # // logllh
-        llForward = self.gpu_workspace[used_offset : used_offset + self.minibatch_]
-        used_offset += self.minibatch_
-        llBackward = self.gpu_workspace[used_offset : used_offset + self.minibatch_]
-        used_offset += self.minibatch_
 
         if training:
             grads *= 0.0  # zero grads
+
+        used_offset, (denom, alphas, betas, llForward, llBackward) = self._prepare_workspace()
 
         ######## START EXECUTION ########
         self.log_softmax(acts, denom)
@@ -271,3 +257,31 @@ class GPURNNT:
             return global_constants.RNNTStatus.RNNT_STATUS_INVALID_VALUE
 
         return self.compute_cost_and_score(acts, None, costs, pad_labels, label_lengths, input_lengths)
+
+    def _prepare_workspace(self) -> (int, Tuple[torch.Tensor]):
+        """
+        Helper method that uses the workspace and constructs slices of it that can be used.
+
+        Returns:
+            An int, representing the offset of the used workspace (practically, the slice of the workspace consumed)
+            A tuple of tensors representing the shared workspace.
+        """
+        used_offset = 0
+
+        # // denom
+        denom = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
+
+        # // alphas & betas
+        alphas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
+        betas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
+
+        # // logllh
+        llForward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
+        used_offset += self.minibatch_
+        llBackward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
+        used_offset += self.minibatch_
+
+        return used_offset, (denom, alphas, betas, llForward, llBackward)
