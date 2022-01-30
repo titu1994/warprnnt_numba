@@ -1,0 +1,3 @@
+
+from warprnnt_numba.rnnt_loss.rnnt_atomic_locks.rnnt_atomic_locks_pytorch import RNNTLossNumbaAtomicLock
+from warprnnt_numba.rnnt_loss.rnnt_atomic_locks.rnnt_atomic_locks import rnnt_loss_cpu, rnnt_loss_gpu
