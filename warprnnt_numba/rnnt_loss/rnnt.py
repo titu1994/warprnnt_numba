@@ -191,9 +191,6 @@ def rnnt_loss_gpu(
     ### VIEW TENSORS AS VECTORS FOR POINTER INDEXING ###
     acts, acts_shape = rnnt_helper.flatten_tensor(acts)
 
-    ### REPRESENT THE CUDA ARRAY INTERFACE OF COSTS VECTOR ###
-    costs_repr = cuda.as_cuda_array(costs, sync=False)  # NO COPY OF DATA, JUST CHANGE REPRESENTATION
-
     wrapper = gpu_rnnt.GPURNNT(
         minibatch=minibatch_size,
         maxT=maxT,
@@ -210,7 +207,7 @@ def rnnt_loss_gpu(
     if grads is None:
         status = wrapper.score_forward(
             acts=acts.data,
-            costs=costs_repr,
+            costs=costs.data,
             pad_labels=labels.data,
             label_lengths=label_lengths.data,
             input_lengths=input_lengths.data,
@@ -226,14 +223,14 @@ def rnnt_loss_gpu(
         status = wrapper.cost_and_grad(
             acts=acts.data,
             grads=grads.data,
-            costs=costs_repr,
+            costs=costs.data,
             pad_labels=labels.data,
             label_lengths=label_lengths.data,
             input_lengths=input_lengths.data,
         )
 
-        if status != global_constants.RNNTStatus.RNNT_STATUS_SUCCESS:
-            raise RuntimeError("Could not calculate forward scores")
+    if status != global_constants.RNNTStatus.RNNT_STATUS_SUCCESS:
+        raise RuntimeError("Could not calculate forward scores")
 
     del gpu_workspace, wrapper
     return True
