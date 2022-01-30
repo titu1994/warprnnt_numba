@@ -33,7 +33,7 @@ import numba
 import torch
 from numba import cuda
 
-from warprnnt_numba.rnnt_loss.utils import global_constants
+from warprnnt_numba.rnnt_loss.utils import global_constants, rnnt_helper
 from warprnnt_numba.rnnt_loss.utils.cuda_utils import gpu_rnnt_kernel, reduce
 
 
@@ -212,15 +212,20 @@ class GPURNNT:
                 self.clamp_,
             )
 
-        # // cost
-        costs.copy_to_device(llForward, stream=self.stream_)
+        # // cost copy, negate (for log likelihood) and update with additional regularizers
+        # This needs to be done via CUDA, because we used temporary memory llForward
+        # passed to alpha, which was updated with log likelihoods.
+        # But copying this data into a pytorch pointer is more difficult (numba api is one way)
+        # Therefore launch a pointwise CUDA kernel to update the costs inplace from data of llForward
+        # Then negate to compute the loglikelihood.
+        threadsperblock = min(costs.shape[0], 128, global_constants.threads_per_block())
+        blockspergrid = (costs.shape[0] + (threadsperblock - 1)) // threadsperblock
+        rnnt_helper.compute_costs_data[blockspergrid, threadsperblock, self.stream_, 0](
+            llForward,
+            costs,
+            self.fastemit_lambda_
+        )
         self.stream_.synchronize()
-
-        # compute negative log likelihood.
-        for mb in range(self.minibatch_):
-            # Scale llForward by FastEmit lambda
-            costs[mb] = -costs[mb]
-            costs[mb] = (1.0 + self.fastemit_lambda_) * costs[mb]
 
         return global_constants.RNNTStatus.RNNT_STATUS_SUCCESS
 
