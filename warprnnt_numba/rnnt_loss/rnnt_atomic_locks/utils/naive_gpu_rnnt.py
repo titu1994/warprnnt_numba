@@ -26,18 +26,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import multiprocessing
-from typing import Optional, Tuple
+from typing import Optional
 
-import numba
 import torch
-from numba import cuda
 
 from warprnnt_numba.rnnt_loss.utils import global_constants
-from warprnnt_numba.rnnt_loss.utils.cuda_utils import gpu_rnnt_kernel, reduce
+from warprnnt_numba.rnnt_loss.utils.cuda_utils import gpu_rnnt_kernel, gpu_rnnt
+from warprnnt_numba.rnnt_loss.rnnt_atomic_locks.utils import naive_gpu_rnnt_kernel
 
 
-class GPURNNT:
+class GPURNNTAtomicLocks(gpu_rnnt.GPURNNT):
     def __init__(
         self,
         minibatch: int,
@@ -68,55 +66,17 @@ class GPURNNT:
             num_threads: Number of OMP threads to launch.
             stream: Numba Cuda Stream.
         """
-        self.minibatch_ = minibatch
-        self.maxT_ = maxT
-        self.maxU_ = maxU
-        self.alphabet_size_ = alphabet_size
-        self.gpu_workspace = cuda.as_cuda_array(
-            workspace
-        )  # a flat vector of floatX numbers that represents allocated memory slices
-        self.blank_ = blank
-        self.fastemit_lambda_ = fastemit_lambda
-        self.clamp_ = abs(clamp)
-        self.num_threads_ = num_threads
-        self.stream_ = stream  # type: cuda.cudadrv.driver.Stream
-
-        if num_threads > 0:
-            numba.set_num_threads(min(multiprocessing.cpu_count(), num_threads))
-            self.num_threads_ = numba.get_num_threads()
-        else:
-            self.num_threads_ = numba.get_num_threads()
-
-    def log_softmax(self, acts: torch.Tensor, denom: torch.Tensor):
-        """
-        Computes the log softmax denominator of the input activation tensor
-        and stores the result in denom.
-
-        Args:
-            acts: Activation tensor of shape [B, T, U, V+1]. The input must be represented as a flat tensor
-                of shape [B * T * U * (V+1)] to allow pointer indexing.
-            denom: A zero tensor of same shape as acts.
-
-        Updates:
-            This kernel inplace updates the `denom` tensor
-        """
-        # // trans_acts + pred_acts -> log_softmax denominator
-        reduce.reduce_max(
-            acts,
-            denom,
-            rows=self.alphabet_size_,
-            cols=self.minibatch_ * self.maxT_ * self.maxU_,
-            minus=False,
-            stream=self.stream_,
-        )
-
-        reduce.reduce_exp(
-            acts,
-            denom,
-            rows=self.alphabet_size_,
-            cols=self.minibatch_ * self.maxT_ * self.maxU_,
-            minus=True,
-            stream=self.stream_,
+        super().__init__(
+            minibatch=minibatch,
+            maxT=maxT,
+            maxU=maxU,
+            alphabet_size=alphabet_size,
+            workspace=workspace,
+            blank=blank,
+            fastemit_lambda=fastemit_lambda,
+            clamp=clamp,
+            num_threads=num_threads,
+            stream=stream
         )
 
     def compute_cost_and_score(
@@ -154,11 +114,15 @@ class GPURNNT:
 
         used_offset, (denom, alphas, betas, llForward, llBackward) = self._prepare_workspace()
 
+        lock = torch.zeros(
+            (self.minibatch_, self.maxU_), dtype=torch.int32, device=acts.device
+        )
+
         ######## START EXECUTION ########
         self.log_softmax(acts, denom)
 
         # Compute alphas
-        gpu_rnnt_kernel.compute_alphas_kernel[self.minibatch_, self.maxU_, self.stream_, 0](
+        naive_gpu_rnnt_kernel.compute_alphas_kernel_atomic_locks[self.minibatch_, self.maxU_, self.stream_, 0](
             acts,
             denom,
             alphas,
@@ -171,11 +135,14 @@ class GPURNNT:
             self.maxU_,
             self.alphabet_size_,
             self.blank_,
+            lock,
         )
 
         if training:
             # Compute betas
-            gpu_rnnt_kernel.compute_betas_kernel[self.minibatch_, self.maxU_, self.stream_, 0](
+            lock *= 0
+
+            naive_gpu_rnnt_kernel.compute_betas_kernel_atomic_locks[self.minibatch_, self.maxU_, self.stream_, 0](
                 acts,
                 denom,
                 betas,
@@ -188,11 +155,12 @@ class GPURNNT:
                 self.maxU_,
                 self.alphabet_size_,
                 self.blank_,
+                lock,
             )
 
             # Compute gradient
             grad_blocks_per_grid = self.minibatch_ * self.maxT_ * self.maxU_
-            grad_threads_per_block = gpu_rnnt_kernel.GPU_RNNT_THREAD_SIZE
+            grad_threads_per_block = naive_gpu_rnnt_kernel.GPU_RNNT_THREAD_SIZE
             gpu_rnnt_kernel.compute_grad_kernel[grad_blocks_per_grid, grad_threads_per_block, self.stream_, 0](
                 grads,
                 acts,
@@ -223,65 +191,3 @@ class GPURNNT:
             costs[mb] = (1.0 + self.fastemit_lambda_) * costs[mb]
 
         return global_constants.RNNTStatus.RNNT_STATUS_SUCCESS
-
-    def cost_and_grad(
-        self,
-        acts: torch.Tensor,
-        grads: torch.Tensor,
-        costs: torch.Tensor,
-        pad_labels: torch.Tensor,
-        label_lengths: torch.Tensor,
-        input_lengths: torch.Tensor,
-    ):
-        if (
-            acts is None
-            or grads is None
-            or costs is None
-            or pad_labels is None
-            or label_lengths is None
-            or input_lengths is None
-        ):
-            return global_constants.RNNTStatus.RNNT_STATUS_INVALID_VALUE
-
-        return self.compute_cost_and_score(acts, grads, costs, pad_labels, label_lengths, input_lengths)
-
-    def score_forward(
-        self,
-        acts: torch.Tensor,
-        costs: torch.Tensor,
-        pad_labels: torch.Tensor,
-        label_lengths: torch.Tensor,
-        input_lengths: torch.Tensor,
-    ):
-        if acts is None or costs is None or pad_labels is None or label_lengths is None or input_lengths is None:
-            return global_constants.RNNTStatus.RNNT_STATUS_INVALID_VALUE
-
-        return self.compute_cost_and_score(acts, None, costs, pad_labels, label_lengths, input_lengths)
-
-    def _prepare_workspace(self) -> (int, Tuple[torch.Tensor]):
-        """
-        Helper method that uses the workspace and constructs slices of it that can be used.
-
-        Returns:
-            An int, representing the offset of the used workspace (practically, the slice of the workspace consumed)
-            A tuple of tensors representing the shared workspace.
-        """
-        used_offset = 0
-
-        # // denom
-        denom = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-
-        # // alphas & betas
-        alphas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-        betas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
-        used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-
-        # // logllh
-        llForward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
-        used_offset += self.minibatch_
-        llBackward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
-        used_offset += self.minibatch_
-
-        return used_offset, (denom, alphas, betas, llForward, llBackward)
