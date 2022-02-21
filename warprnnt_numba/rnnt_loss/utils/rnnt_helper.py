@@ -106,14 +106,13 @@ def copy_data_1d(source: torch.Tensor, dest: torch.Tensor, idx: int):
 def compute_costs_data(source: torch.Tensor, dest: torch.Tensor, fastemit_lambda: float):
     block = cuda.blockIdx.x
     tid = cuda.threadIdx.x
-    idx = block * cuda.gridDim.x + tid
+    idx = block * cuda.blockDim.x + tid
     length = source.shape[0]
 
     if idx < length:
         copy_data_1d(source, dest, idx)
         dest[idx] *= -1.0
-        dest[idx] *= (1.0 + fastemit_lambda)
-
+        dest[idx] *= 1.0 + fastemit_lambda
 
 def get_workspace_size(
     maxT: int, maxU: int, minibatch: int, gpu: bool
