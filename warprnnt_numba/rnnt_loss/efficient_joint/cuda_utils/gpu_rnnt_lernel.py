@@ -180,13 +180,13 @@ def compute_alphas_kernel(
 
 @cuda.jit()
 def compute_betas_kernel(
-    acts: torch.Tensor,
-    denom: torch.Tensor,
+    log_probs: torch.Tensor,
     betas: torch.Tensor,
     llBackward: torch.Tensor,
     xlen: torch.Tensor,
     ylen: torch.Tensor,
     mlabels: torch.Tensor,  # [B, U]
+    row_splits: torch.Tensor,
     minibatch: int,
     maxT: int,
     maxU: int,
@@ -228,13 +228,14 @@ def compute_betas_kernel(
     U = ylen[b] + 1  # select target length of current sample, +1 for the blank token
 
     labels: torch.Tensor = mlabels[b]  # mb label start point, equivalent to mlabels + b * (maxU - 1)
-    offset = b * maxT * maxU  # pointer indexing offset
+    offset = row_splits[b]  # pointer indexing offset
 
-    # betas += offset # pointer offset, ignored since we explicitly add offset
+    p_beta = offset
+    p_log_probs = offset * 2
 
     # Initilize beta[b, t=T-1, u=U-1] for all b in B with log_probs[b, t=T-1, u=U-1, blank]
-    if u == 0:
-        betas[offset + (T - 1) * maxU + U - 1] = logp(denom, acts, maxT, maxU, alphabet_size, b, T - 1, U - 1, blank_)
+    if u == 0:  # logp(denom, acts, maxT, maxU, alphabet_size, b, T - 1, U - 1, blank_)
+        betas[offset + T * U + (U - 1)] = log_probs[p_log_probs + T * U * 2 - 2, CACHE_IDX_BLANK]
 
     # sync until all betas are initialized
     cuda.syncthreads()
@@ -244,27 +245,38 @@ def compute_betas_kernel(
     for n in range(T + U - 2, -1, -1):
         t = n - u
 
+        p_beta_t = p_beta + t * U
+        p_beta_t_p1 = p_beta + (t + 1) * U
+        p_log_probs_t = p_log_probs + t * U * 2
+
         if u == (U - 1):
             # for t in reversed(range(T - 1)) step to initialize betas[b, t, U-1]
             if t >= 0 and t < (T - 1):
-                betas[offset + t * maxU + U - 1] = betas[offset + (t + 1) * maxU + U - 1] + logp(
-                    denom, acts, maxT, maxU, alphabet_size, b, t, U - 1, blank_
+                betas[p_beta_t + U - 1] = (
+                    betas[p_beta_t_p1 + U - 1] + log_probs[p_log_probs_t + (U - 1) * 2, CACHE_IDX_BLANK]
                 )
         elif u < U:
             if t == T - 1:
                 # for u in reversed(range(U - 1)) step to initialize betas[b, T-1, u]
-                betas[offset + (T - 1) * maxU + u] = betas[offset + (T - 1) * maxU + u + 1] + logp(
-                    denom, acts, maxT, maxU, alphabet_size, b, T - 1, u, labels[u]
+                betas[offset + (T - 1) * U + u] = (
+                    betas[offset + (T - 1) * U + u + 1]
+                    + log_probs[p_log_probs + ((T - 1) * U + u) * 2, CACHE_IDX_SYMBOL]
                 )
+
+                # logp(
+                #     denom, acts, maxT, maxU, alphabet_size, b, T - 1, u, labels[u]
+                # )
             elif (t >= 0) and (t < T - 1):
                 # for t in reversed(range(T - 1)) for u in reversed(range(U - 1)) step to compute betas[b, t, u]
-                no_emit = betas[offset + (t + 1) * maxU + u] + logp(
-                    denom, acts, maxT, maxU, alphabet_size, b, t, u, blank_
-                )
-                emit = betas[offset + t * maxU + u + 1] + logp(
-                    denom, acts, maxT, maxU, alphabet_size, b, t, u, labels[u]
-                )
-                betas[offset + t * maxU + u] = rnnt_helper.log_sum_exp(emit, no_emit)
+                no_emit = betas[p_beta_t_p1 + u] + log_probs[p_log_probs_t + u * 2, CACHE_IDX_BLANK]
+                # logp(
+                #     denom, acts, maxT, maxU, alphabet_size, b, t, u, blank_
+                # )
+                emit = betas[p_beta_t_p1 + u + 1] + log_probs[p_log_probs_t + u * 2, CACHE_IDX_SYMBOL]
+                # logp(
+                #     denom, acts, maxT, maxU, alphabet_size, b, t, u, labels[u]
+                # )
+                betas[offset + t * U + u] = rnnt_helper.log_sum_exp(emit, no_emit)
 
         # sync across all B=b and U=u
         cuda.syncthreads()
