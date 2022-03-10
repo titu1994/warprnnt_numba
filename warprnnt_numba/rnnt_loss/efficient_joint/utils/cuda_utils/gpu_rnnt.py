@@ -34,6 +34,7 @@ import torch
 from numba import cuda
 
 from warprnnt_numba.rnnt_loss.utils import global_constants, rnnt_helper
+from warprnnt_numba.rnnt_loss.efficient_joint.utils import moderngpu_utils
 from warprnnt_numba.rnnt_loss.efficient_joint.utils.cuda_utils import gpu_rnnt_kernel
 
 
@@ -290,3 +291,5 @@ class GPURNNT:
         used_offset += self.minibatch_
 
         return used_offset, (denom, alphas, betas, llForward, llBackward)
+
+
