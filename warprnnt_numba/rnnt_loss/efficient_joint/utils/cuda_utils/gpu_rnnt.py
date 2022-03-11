@@ -37,6 +37,8 @@ from warprnnt_numba.rnnt_loss.utils import global_constants, rnnt_helper
 from warprnnt_numba.rnnt_loss.efficient_joint.utils import moderngpu_utils
 from warprnnt_numba.rnnt_loss.efficient_joint.utils.cuda_utils import gpu_rnnt_kernel
 
+MAX_THREADS_PER_BLOCK = 1024
+
 
 class GPURNNT:
     def __init__(
@@ -88,7 +90,28 @@ class GPURNNT:
         else:
             self.num_threads_ = numba.get_num_threads()
 
-    def log_softmax(self, acts: torch.Tensor, denom: torch.Tensor):
+    """
+    /**
+      @param logits A 2-D tensor of shape (sum_all_TU, vocab_size)
+                    from the output of `nn.Linear`.
+      @param denominator  A 1-D tensor of shape (sum_all_TU,).
+      @param targets  A 2-D tensor of shape (batch_size, max_U).
+      @param target_lengths A 1-D tensor of shape (batch_size,)
+      @param row_splits A 1-D tensor of shape (batch_size,)
+      @param row_ids A 1-D tensor of shape (sum_all_TU,)
+      @param blank The ID of the blank symbol.
+     */
+    """
+
+    def log_softmax(
+        self,
+        acts: torch.Tensor,
+        denom: torch.Tensor,
+        mlabels: torch.Tensor,
+        ylen: torch.Tensor,
+        row_splits: torch.Tensor,
+        row_ids: torch.Tensor,
+    ):
         """
         Computes the log softmax denominator of the input activation tensor
         and stores the result in denom.
@@ -101,23 +124,24 @@ class GPURNNT:
         Updates:
             This kernel inplace updates the `denom` tensor
         """
-        # // trans_acts + pred_acts -> log_softmax denominator
-        reduce.reduce_max(
-            acts,
-            denom,
-            rows=self.alphabet_size_,
-            cols=self.minibatch_ * self.maxT_ * self.maxU_,
-            minus=False,
-            stream=self.stream_,
-        )
+        log_probs = torch.empty(acts.size(0), 2, dtype=acts.dtype, device=acts.device)
+        num_blocks = (acts.size(0) + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK
 
-        reduce.reduce_exp(
-            acts,
+        # call kernel
+        gpu_rnnt_kernel.compute_log_probs[num_blocks, MAX_THREADS_PER_BLOCK, self.stream_, 0](
             denom,
-            rows=self.alphabet_size_,
-            cols=self.minibatch_ * self.maxT_ * self.maxU_,
-            minus=True,
-            stream=self.stream_,
+            acts,
+            log_probs,
+            mlabels,
+            ylen,
+            row_splits,
+            row_ids,
+            self.minibatch_,
+            self.maxT_,
+            self.maxU_,
+            self.alphabet_size_,
+            self.blank_,
+            acts.size(0),
         )
 
     def compute_cost_and_score(
@@ -222,9 +246,7 @@ class GPURNNT:
         threadsperblock = min(costs.shape[0], 128, global_constants.threads_per_block())
         blockspergrid = (costs.shape[0] + (threadsperblock - 1)) // threadsperblock
         rnnt_helper.compute_costs_data[blockspergrid, threadsperblock, self.stream_, 0](
-            llForward,
-            costs,
-            self.fastemit_lambda_
+            llForward, costs, self.fastemit_lambda_
         )
         self.stream_.synchronize()
 
@@ -275,21 +297,19 @@ class GPURNNT:
         used_offset = 0
 
         # // denom
-        denom = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        denom = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
         used_offset += self.maxT_ * self.maxU_ * self.minibatch_
 
         # // alphas & betas
-        alphas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        alphas = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
         used_offset += self.maxT_ * self.maxU_ * self.minibatch_
-        betas = self.gpu_workspace[used_offset: used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
+        betas = self.gpu_workspace[used_offset : used_offset + self.maxT_ * self.maxU_ * self.minibatch_]
         used_offset += self.maxT_ * self.maxU_ * self.minibatch_
 
         # // logllh
-        llForward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
+        llForward = self.gpu_workspace[used_offset : used_offset + self.minibatch_]
         used_offset += self.minibatch_
-        llBackward = self.gpu_workspace[used_offset: used_offset + self.minibatch_]
+        llBackward = self.gpu_workspace[used_offset : used_offset + self.minibatch_]
         used_offset += self.minibatch_
 
         return used_offset, (denom, alphas, betas, llForward, llBackward)
-
-

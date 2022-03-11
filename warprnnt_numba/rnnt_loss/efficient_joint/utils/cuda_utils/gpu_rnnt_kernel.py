@@ -43,9 +43,8 @@ def compute_log_probs(
     denom: torch.Tensor,
     acts: torch.Tensor,
     log_probs: torch.Tensor,
-    xlen: torch.Tensor,
-    ylen: torch.Tensor,
     mlabels: torch.Tensor,  # [B]
+    ylen: torch.Tensor,
     row_splits: torch.Tensor,
     row_ids: torch.Tensor,
     minibatch: int,
